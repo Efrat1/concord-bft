@@ -145,7 +145,7 @@ class ClientsManager : public ResPagesClient<ClientsManager>, public IPendingReq
 
   // Adds a record for the request with reqSeqNum from the client with the given clientId (if a record for that request
   // does not already exist). Behavior is undefined if clientId does not belong to a valid client.
-  void addPendingRequest(NodeIdType clientId, ReqId reqSeqNum, const std::string& cid);
+  void addPendingRequest(NodeIdType clientId, ReqId reqSeqNum, const std::string& cid, uint16_t offsetInBatch);
 
   // Mark a request with ID reqSequenceNum that this ClientsManager currently has recorded as committed (does nothing if
   // there is no existing record for reqSequenceNum). Behavior is undefined if clientId does not belong to a valid
@@ -180,11 +180,13 @@ class ClientsManager : public ResPagesClient<ClientsManager>, public IPendingReq
   // VC_LOG must be initialized. Behavior is undefined if it is not.
   void logAllPendingRequestsExceedingThreshold(const int64_t threshold, const Time& currTime) const;
 
+  void extendAllRequestsTime(const Time& currTime);
+
   // Deletes the reply to clientId this ClientsManager currently has a record for made at the earliest time. If this
   // ClientsManager has any reply records to the given clientId, but none of those records have a record time, the one
   // for the earliest request sequence number will be deleted. Does nothing if this ClientsManager has no reply records
   // to the given clientId. Behavior is undefined if clientId does not belong to a valid client.
-  void deleteOldestReply(NodeIdType clientId);
+  void deleteOldestReply(NodeIdType clientId, ReqId reqSeqNum = 0, uint16_t offsetInBatch = 0);
 
   // Sets/updates a client public key and persist it to the reserved pages. Behavior is undefined in the following
   // cases:
@@ -193,7 +195,10 @@ class ClientsManager : public ResPagesClient<ClientsManager>, public IPendingReq
   void setClientPublicKey(NodeIdType, const std::string& key, concord::util::crypto::KeyFormat) override;
 
   // General
-  static uint32_t reservedPagesPerClient(const uint32_t& sizeOfReservedPage, const uint32_t& maxReplySize);
+  static uint32_t reservedPagesPerRequest(const uint32_t& sizeOfReservedPage, const uint32_t& maxReplySize);
+  static uint32_t reservedPagesPerClient(const uint32_t& sizeOfReservedPage,
+                                         const uint32_t& maxReplySize,
+                                         const uint16_t maxNumReqPerClient);
 
   bool isInternal(NodeIdType clientId) const;
 
@@ -208,22 +213,25 @@ class ClientsManager : public ResPagesClient<ClientsManager>, public IPendingReq
 
   std::string scratchPage_;
 
+  uint32_t reservedPagesPerRequest_;
   uint32_t reservedPagesPerClient_;
 
   struct RequestInfo {
-    RequestInfo() : time(MinTime) {}
-    RequestInfo(Time t, const std::string& c) : time(t), cid(c) {}
+    RequestInfo() : time(MinTime), offsetInBatch(0) {}
+    RequestInfo(Time t, const std::string& c, uint16_t o) : time(t), cid(c), offsetInBatch(o) {}
 
     Time time;
     std::string cid;
+    uint16_t offsetInBatch;
     bool committed = false;
   };
 
   class RequestsInfo {
    public:
-    void emplaceSafe(NodeIdType clientId, ReqId reqSeqNum, const std::string& cid);
+    void emplaceSafe(NodeIdType clientId, ReqId reqSeqNum, const std::string& cid, uint16_t offsetInBatch);
     bool removeRequestsOutOfBatchBoundsSafe(NodeIdType clientId, ReqId reqSequenceNum);
     bool findSafe(ReqId reqSeqNum);
+    uint16_t getOffsetSafe(ReqId reqSeqNum);
     void clearSafe();
     void removeOldPendingReqsSafe(NodeIdType clientId, ReqId reqSeqNum);
     void removePendingForExecutionRequestSafe(NodeIdType clientId, ReqId reqSeqNum);
@@ -236,6 +244,7 @@ class ClientsManager : public ResPagesClient<ClientsManager>, public IPendingReq
     void logAllPendingRequestsExceedingThreshold(const int64_t threshold,
                                                  const Time& currTime,
                                                  int& numExceeding) const;
+    void extendAllRequestsTime(const Time& currTime);
 
    public:
     std::mutex requestsMapMutex_;
@@ -244,15 +253,22 @@ class ClientsManager : public ResPagesClient<ClientsManager>, public IPendingReq
 
   class RepliesInfo {
    public:
-    void deleteOldestReplyIfNeededSafe(NodeIdType clientId, uint16_t maxNumOfReqsPerClient);
-    bool insertOrAssignSafe(ReqId reqSeqNum, Time time);
+    void deleteReplyIfNeededSafe(NodeIdType clientId,
+                                 ReqId reqSeqNum,
+                                 uint16_t maxNumOfReqsPerClient,
+                                 uint16_t reqOffset);
+    void insertOrAssignSafe(NodeIdType clientId,
+                            ReqId reqSeqNum,
+                            uint16_t maxNumOfReqsPerClient,
+                            uint16_t requestOffset);
     bool findSafe(ReqId reqSeqNum);
+    uint16_t getOffsetSafe(ReqId reqSeqNum);
 
     bool find(ReqId reqSeqNum) const;
 
    public:
     std::mutex repliesMapMutex_;
-    std::map<ReqId, Time> repliesMap_;
+    std::map<ReqId, uint16_t> repliesMap_;
   };
 
   struct ClientInfo {

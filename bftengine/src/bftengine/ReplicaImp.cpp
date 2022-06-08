@@ -401,6 +401,7 @@ void ReplicaImp::onMessage<ClientRequestMsg>(ClientRequestMsg *m) {
   const bool readOnly = m->isReadOnly();
   const ReqId reqSeqNum = m->requestSeqNum();
   const uint64_t flags = m->flags();
+  const uint16_t reqOffsetInBatch = m->requestOffsetInBatch();
 
   SCOPED_MDC_PRIMARY(std::to_string(currentPrimary()));
   SCOPED_MDC_CID(m->getCid());
@@ -502,7 +503,7 @@ void ReplicaImp::onMessage<ClientRequestMsg>(ClientRequestMsg *m) {
       }
     } else {  // not the current primary
       if (clientsManager->canBecomePending(clientId, reqSeqNum)) {
-        clientsManager->addPendingRequest(clientId, reqSeqNum, m->getCid());
+        clientsManager->addPendingRequest(clientId, reqSeqNum, m->getCid(), reqOffsetInBatch);
 
         // Adding the message to a queue for future retransmission.
         if (requestsOfNonPrimary.size() < NonPrimaryCombinedReqSize)
@@ -715,8 +716,10 @@ ClientRequestMsg *ReplicaImp::addRequestToPrePrepareMessage(ClientRequestMsg *&n
     SCOPED_MDC_CID(nextRequest->getCid());
     if (clientsManager->canBecomePending(nextRequest->clientProxyId(), nextRequest->requestSeqNum())) {
       prePrepareMsg.addRequest(nextRequest->body(), nextRequest->size());
-      clientsManager->addPendingRequest(
-          nextRequest->clientProxyId(), nextRequest->requestSeqNum(), nextRequest->getCid());
+      clientsManager->addPendingRequest(nextRequest->clientProxyId(),
+                                        nextRequest->requestSeqNum(),
+                                        nextRequest->getCid(),
+                                        nextRequest->requestOffsetInBatch());
       metric_primary_batching_duration_.finishMeasurement(nextRequest->getCid());
     }
   } else if (nextRequest->size() > maxStorageForRequests) {  // The message is too big
@@ -1077,6 +1080,16 @@ void ReplicaImp::onMessage<PrePrepareMsg>(PrePrepareMsg *msg) {
 
     if (viewsManager->addPotentiallyMissingPP(msg, lastStableSeqNum)) {
       LOG_INFO(CNSUS, "PrePrepare added to views manager. " << KVLOG(lastStableSeqNum));
+
+      RequestsIterator reqIter(msg);
+      char *requestBody = nullptr;
+      while (reqIter.getAndGoToNext(requestBody)) {
+        ClientRequestMsg req(reinterpret_cast<ClientRequestMsgHeader *>(requestBody));
+        if (!clientsManager->isValidClient(req.clientProxyId())) continue;
+        if (clientsManager->canBecomePending(req.clientProxyId(), req.requestSeqNum()))
+          clientsManager->addPendingRequest(
+              req.clientProxyId(), req.requestSeqNum(), req.getCid(), req.requestOffsetInBatch());
+      }
       tryToEnterView();
     } else {
       LOG_INFO(CNSUS, "PrePrepare discarded.");
@@ -1118,7 +1131,8 @@ void ReplicaImp::onMessage<PrePrepareMsg>(PrePrepareMsg *msg) {
         if (!clientsManager->isValidClient(req.clientProxyId())) continue;
         clientsManager->removeRequestsOutOfBatchBounds(req.clientProxyId(), req.requestSeqNum());
         if (clientsManager->canBecomePending(req.clientProxyId(), req.requestSeqNum()))
-          clientsManager->addPendingRequest(req.clientProxyId(), req.requestSeqNum(), req.getCid());
+          clientsManager->addPendingRequest(
+              req.clientProxyId(), req.requestSeqNum(), req.getCid(), req.requestOffsetInBatch());
         if (requestsOfNonPrimary.count(req.requestSeqNum())) {
           delete std::get<1>(requestsOfNonPrimary.at(req.requestSeqNum()));
           requestsOfNonPrimary.erase(req.requestSeqNum());
@@ -2422,7 +2436,9 @@ void ReplicaImp::onMessage<CheckpointMsg>(CheckpointMsg *msg) {
     else {
       LOG_INFO(GL, "Call to startCollectingState()");
       time_in_state_transfer_.start();
-      clientsManager->clearAllPendingRequests();  // to avoid entering a new view on old request timeout
+      //      clientsManager->clearAllPendingRequests();  // to avoid entering a new view on old request timeout
+      // to avoid entering a new view on old request timeout
+      clientsManager->extendAllRequestsTime(getMonotonicTime());
       stateTransfer->startCollectingState();
     }
   } else if (msgSenderId == msgGenReplicaId) {
@@ -3232,6 +3248,7 @@ void ReplicaImp::onNewView(const std::vector<PrePrepareMsg *> &prePreparesForNew
   if (ps_) ps_->endWriteTran(config_.getsyncOnUpdateOfMetadata());
 
   clientsManager->clearAllPendingRequests();
+  // clientsManager->extendAllRequestsTime(getMonotonicTime()); //TODO efrat: needed here?
 
   // Once we move to higher view we would prefer tp avoid retransmitting clients request from previous view
   for (auto &[_, msg] : requestsOfNonPrimary) {
@@ -3258,6 +3275,16 @@ void ReplicaImp::onNewView(const std::vector<PrePrepareMsg *> &prePreparesForNew
 
   for (size_t i = 0; i < prePreparesForNewView.size(); i++) {
     PrePrepareMsg *pp = prePreparesForNewView[i];
+    RequestsIterator reqIter(pp);
+    char *requestBody = nullptr;
+    while (reqIter.getAndGoToNext(requestBody)) {
+      ClientRequestMsg req(reinterpret_cast<ClientRequestMsgHeader *>(requestBody));
+      if (!clientsManager->isValidClient(req.clientProxyId())) continue;
+      if (clientsManager->canBecomePending(req.clientProxyId(), req.requestSeqNum()))
+        clientsManager->addPendingRequest(
+            req.clientProxyId(), req.requestSeqNum(), req.getCid(), req.requestOffsetInBatch());
+    }
+
     SeqNumInfo &seqNumInfo = mainLog->get(pp->seqNumber());
     sendPreparePartial(seqNumInfo);
   }
@@ -5267,7 +5294,9 @@ void ReplicaImp::handleDeferredRequests() {
     if (!stateTransfer->isCollectingState()) {
       LOG_INFO(GL, "Call to startCollectingState()");
       time_in_state_transfer_.start();
-      clientsManager->clearAllPendingRequests();  // to avoid entering a new view on old request timeout
+      //      clientsManager->clearAllPendingRequests();  // to avoid entering a new view on old request timeout
+      // to avoid entering a new view on old request timeout
+      clientsManager->extendAllRequestsTime(getMonotonicTime());
       stateTransfer->startCollectingState();
     } else {
       LOG_ERROR(GL, "Collecting state should be active while we are in onExecutionFinish");
@@ -5351,8 +5380,10 @@ void ReplicaImp::onExecutionFinish() {
 
   if (ControlStateManager::instance().getCheckpointToStopAt().has_value() &&
       lastExecutedSeqNum == ControlStateManager::instance().getCheckpointToStopAt()) {
-    // We are about to stop execution. To avoid VC we now clear all pending requests
-    clientsManager->clearAllPendingRequests();
+    //    // We are about to stop execution. To avoid VC we now clear all pending requests
+    //    clientsManager->clearAllPendingRequests();
+    // to avoid entering a new view on old request timeout
+    clientsManager->extendAllRequestsTime(getMonotonicTime());
   }
 
   // Sending noop commands to get the system to a stable checkpoint,
@@ -5680,6 +5711,7 @@ void ReplicaImp::sendResponses(PrePrepareMsg *ppMsg, IRequestsHandler::Execution
     } else {
       if (req.flags & HAS_PRE_PROCESSED_FLAG) metric_total_preexec_requests_executed_++;
       if (req.outActualReplySize != 0) {
+        LOG_INFO(GL, "efrat new reply of" << KVLOG(ppMsg->seqNumber()));
         replyMsg = clientsManager->allocateNewReplyMsgAndWriteToStorage(req.clientId,
                                                                         req.requestSequenceNum,
                                                                         currentPrimary(),
@@ -5687,8 +5719,10 @@ void ReplicaImp::sendResponses(PrePrepareMsg *ppMsg, IRequestsHandler::Execution
                                                                         req.outActualReplySize,
                                                                         req.outReplicaSpecificInfoSize,
                                                                         executionResult);
+        //        if (replyMsg) {
         send(replyMsg.get(), req.clientId);
         free(req.outReply);
+        //        }
         req.outReply = nullptr;
         clientsManager->removePendingForExecutionRequest(req.clientId, req.requestSequenceNum);
         continue;
@@ -5699,6 +5733,7 @@ void ReplicaImp::sendResponses(PrePrepareMsg *ppMsg, IRequestsHandler::Execution
         executionResult = static_cast<uint32_t>(bftEngine::OperationResult::EXEC_DATA_EMPTY);
       }
     }
+    LOG_INFO(GL, "efrat new reply2 of" << KVLOG(ppMsg->seqNumber()));
 
     replyMsg = clientsManager->allocateNewReplyMsgAndWriteToStorage(req.clientId,
                                                                     req.requestSequenceNum,
@@ -5707,8 +5742,10 @@ void ReplicaImp::sendResponses(PrePrepareMsg *ppMsg, IRequestsHandler::Execution
                                                                     req.outActualReplySize,
                                                                     0,
                                                                     executionResult);
+    //    if (replyMsg) {
     send(replyMsg.get(), req.clientId);
     free(req.outReply);
+    //    }
     req.outReply = nullptr;
     clientsManager->removePendingForExecutionRequest(req.clientId, req.requestSequenceNum);
   }
@@ -5836,8 +5873,10 @@ void ReplicaImp::executeNextCommittedRequests(concordUtils::SpanWrapper &parent_
 
   if (ControlStateManager::instance().getCheckpointToStopAt().has_value() &&
       lastExecutedSeqNum == ControlStateManager::instance().getCheckpointToStopAt()) {
-    // We are about to stop execution. To avoid VC we now clear all pending requests
-    clientsManager->clearAllPendingRequests();
+    //    // We are about to stop execution. To avoid VC we now clear all pending requests
+    //    clientsManager->clearAllPendingRequests();
+    // to avoid entering a new view on old request timeout
+    clientsManager->extendAllRequestsTime(getMonotonicTime());
   }
   if (isCurrentPrimary() && requestsQueueOfPrimary.size() > 0) tryToSendPrePrepareMsg(true);
 }

@@ -1364,10 +1364,14 @@ void PreProcessor::finalizePreProcessing(NodeIdType clientId, uint16_t reqOffset
                                                          span_context,
                                                          reqProcessingStatePtr->getReqSignature(),
                                                          reqProcessingStatePtr->getReqSignatureLength(),
-                                                         sigsBuf);
+                                                         sigsBuf,
+                                                         reqOffsetInBatch);
         LOG_DEBUG(logger(),
-                  "Pass PreProcessResultMsg to ReplicaImp for consensus"
-                      << KVLOG(batchCid, reqSeqNum, reqCid, clientId, reqOffsetInBatch, preProcessResult));
+                  "Pass PreProcessResultMsg to ReplicaImp for consensus" << KVLOG(
+                      batchCid, reqSeqNum, reqCid, clientId, reqOffsetInBatch, preProcessResult, reqOffsetInBatch));
+        LOG_INFO(logger(),
+                 "efrat Pass PreProcessResultMsg to ReplicaImp for consensus" << KVLOG(
+                     batchCid, reqSeqNum, reqCid, clientId, reqOffsetInBatch, preProcessResult, reqOffsetInBatch));
       } else {
         preProcessMsg = make_unique<ClientRequestMsg>(clientId,
                                                       HAS_PRE_PROCESSED_FLAG,
@@ -1379,10 +1383,15 @@ void PreProcessor::finalizePreProcessing(NodeIdType clientId, uint16_t reqOffset
                                                       preProcessResult,
                                                       span_context,
                                                       reqProcessingStatePtr->getReqSignature(),
-                                                      reqProcessingStatePtr->getReqSignatureLength());
+                                                      reqProcessingStatePtr->getReqSignatureLength(),
+                                                      0,
+                                                      reqOffsetInBatch);
         LOG_DEBUG(logger(),
-                  "Pass pre-processed ClientRequestMsg to ReplicaImp for consensus"
-                      << KVLOG(batchCid, reqSeqNum, reqCid, clientId, reqOffsetInBatch, preProcessResult));
+                  "Pass pre-processed ClientRequestMsg to ReplicaImp for consensus" << KVLOG(
+                      batchCid, reqSeqNum, reqCid, clientId, reqOffsetInBatch, preProcessResult, reqOffsetInBatch));
+        LOG_DEBUG(logger(),
+                  "efrat Pass pre-processed ClientRequestMsg to ReplicaImp for consensus" << KVLOG(
+                      batchCid, reqSeqNum, reqCid, clientId, reqOffsetInBatch, preProcessResult, reqOffsetInBatch));
       }
 
       preProcessorMetrics_.preProcReqCompleted++;

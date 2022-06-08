@@ -91,6 +91,8 @@ Msg Client::createClientMsg(const RequestConfig& config, Msg&& request, bool rea
     expected_sig_len = transaction_signer_->signatureLength();
     msg_size += expected_sig_len;
   }
+  LOG_INFO(logger_, "efrat Client::createClientMsg" << KVLOG(header_size, msg_size));
+
   Msg msg(msg_size);
   ClientRequestMsgHeader* header = reinterpret_cast<ClientRequestMsgHeader*>(msg.data());
   header->msgType = write_req_with_pre_exec ? PRE_PROCESS_REQUEST_MSG_TYPE : REQUEST_MSG_TYPE;
@@ -104,6 +106,7 @@ Msg Client::createClientMsg(const RequestConfig& config, Msg&& request, bool rea
   header->result = 1;  // UNKNOWN
   header->reqSignatureLength = 0;
   header->extraDataLength = 0;
+  header->offsetInBatch = 0;
 
   auto* position = msg.data() + header_size;
 
