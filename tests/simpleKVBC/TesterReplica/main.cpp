@@ -188,12 +188,16 @@ void run_replica(int argc, char** argv) {
     }
   }
 }
+
 }  // namespace concord::kvbc::test
 
 namespace {
 static void signal_handler(int signal_num) {
   LOG_INFO(GL, "Program received signal " << signal_num);
   concord::kvbc::test::timeToExit = true;
+  std::string file_path = "/home/edar/concord-bft/build/asan_logs/memLeaked_signal_handler" +
+                          std::to_string(std::rand() % 100) + ".txt";
+  checkpointMsgAllocations.save_to(file_path);
   __lsan_do_recoverable_leak_check();
 }
 }  // namespace
@@ -207,6 +211,11 @@ int main(int argc, char** argv) {
   } catch (const std::exception& e) {
     LOG_FATAL(GL, "exception: " << e.what());
   }
+
+  std::string file_path =
+      "/home/edar/concord-bft/build/asan_logs/memLeaked" + std::to_string(std::rand() % 100) + ".txt";
+  bool leaked = checkpointMsgAllocations.save_to(file_path);
+  LOG_FATAL(GL, "efrat. checking leak" << KVLOG(leaked, file_path));
   __lsan_do_recoverable_leak_check();
 
   return 0;

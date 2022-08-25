@@ -505,8 +505,12 @@ void ReplicaImp::onMessage<ClientRequestMsg>(ClientRequestMsg *m) {
         clientsManager->addPendingRequest(clientId, reqSeqNum, m->getCid());
 
         // Adding the message to a queue for future retransmission.
-        if (requestsOfNonPrimary.size() < NonPrimaryCombinedReqSize)
+        if (requestsOfNonPrimary.size() < NonPrimaryCombinedReqSize) {
+          if (requestsOfNonPrimary.count(m->requestSeqNum())) {
+            LOG_FATAL(CNSUS, "efrat. msg is about to be overridden => memory leak!" << KVLOG(m->requestSeqNum()));
+          }
           requestsOfNonPrimary[m->requestSeqNum()] = std::make_pair(getMonotonicTime(), m);
+        }
         send(m, currentPrimary());
         LOG_INFO(CNSUS, "Forwarding ClientRequestMsg to the current primary." << KVLOG(reqSeqNum, clientId));
         return;

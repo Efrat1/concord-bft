@@ -45,6 +45,8 @@ void MessageBase::printLiveMessages() {
 namespace bftEngine {
 namespace impl {
 
+MemoryMap checkpointMsgAllocations;
+
 MessageBase::~MessageBase() {
 #ifdef DEBUG_MEMORY_MSG
   liveMessagesDebug.erase(this);

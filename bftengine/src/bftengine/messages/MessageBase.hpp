@@ -18,8 +18,53 @@
 #include "MsgCode.hpp"
 #include "ReplicasInfo.hpp"
 
+#include <iostream>
+#include <fstream>
+#include <map>
+#include <mutex>
+
+typedef struct msgInfo {
+  ReplicaId genReplica;
+  SeqNum seqNum;
+} MsgInfo;
+
+typedef struct memoryMap {
+  std::map<void *, MsgInfo> allocated_msgs;
+  std::mutex allocated_mutex;
+
+  void add_allocated(void *msg, ReplicaId repId, SeqNum seqNum) {
+    allocated_mutex.lock();
+    allocated_msgs.emplace(msg, MsgInfo{repId, seqNum});
+  }
+
+  void deallocate(void *msg) {
+    allocated_mutex.lock();
+    if (allocated_msgs.find(msg) != allocated_msgs.end()) {
+      allocated_msgs.erase(msg);
+    }
+  }
+
+  bool save_to(const std::string &file_path) {
+    allocated_mutex.lock();
+    std::ofstream outFile(file_path);
+    bool leaked = false;
+
+    outFile << "The following CheckpointMsgs were allocated but never freed:" << std::endl;
+
+    for (auto msg : allocated_msgs) {
+      outFile << reinterpret_cast<void *>(msg.first) << " : ReplicaId: " << msg.second.genReplica
+              << " SeqNum: " << msg.second.seqNum << std::endl;
+      leaked = true;
+    }
+    outFile.close();
+    return leaked;
+  }
+} MemoryMap;
+
 namespace bftEngine {
 namespace impl {
+
+extern MemoryMap checkpointMsgAllocations;
 
 template <typename MessageT>
 size_t sizeOfHeader();
