@@ -441,4 +441,6 @@ string computeSHA256Hash(const char* data, size_t length) {
   return hash;
 }
 
+void _openssl_free(void* ptr) { OPENSSL_free(ptr); }
+
 }  // namespace concord::crypto::openssl
