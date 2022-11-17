@@ -157,7 +157,7 @@ class RangeValidationTree {
     NodeVal(const std::shared_ptr<char[]>&& v, size_t size) : NodeVal(v.get(), size) {}
     NodeVal(const std::string& v) : NodeVal(v.data(), v.size()) {}
     NodeVal(const NodeVal& v) : val_(v.val_) {}
-    // NodeVal(NodeVal&& v) : val_(std::move(v.val_)) {}
+    NodeVal(NodeVal&& v) : val_(std::move(v.val_)) {}
     NodeVal(long n) : val_{n} {}
     NodeVal() : val_{0L} {}
     NodeVal(const NodeVal_t& v) : val_{v % kNodeValueModulo_} {}

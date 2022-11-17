@@ -25,29 +25,14 @@
 #include <openssl/err.h>
 #include "scope_exit.hpp"
 #include "crypto.hpp"
-#include <atomic>
-#include <iostream>
 
 #define THROW_OPENSSL_ERROR throw std::runtime_error(ERR_reason_error_string(ERR_get_error()))
 namespace concord::crypto::openssl {
 
 class Integer {
  public:
-  static int wat() {
-    static std::atomic<int> __id{0};
-    auto id = __id.fetch_add(1);
-    std::cout << "EFRAT allocated id " << id << std::endl;
-    return id;
-  }
-
-  int wat_{-1};
-  Integer() : num_{BN_new()} {
-    wat_ = wat();
-    std::cout << " () " << std::endl;
-    assertResultValid(num_.get());
-  }
+  Integer() : num_{BN_new()} { assertResultValid(num_.get()); }
   explicit Integer(const long n) : Integer() {
-    std::cout << " (const long n) " << std::endl;
     long val = n;
     if (val < 0) {
       BN_set_negative(num_.get(), 1);
@@ -55,23 +40,13 @@ class Integer {
     }
     assertResultValid(BN_set_word(num_.get(), val));
   }
-  Integer(const std::string& s) : Integer(reinterpret_cast<unsigned const char*>(s.data()), s.size()) {
-    std::cout << " (const std::string& s) " << std::endl;
-  }
+  Integer(const std::string& s) : Integer(reinterpret_cast<unsigned const char*>(s.data()), s.size()) {}
   // BN_bin2bn() converts the positive integer in big-endian form of length len at s into a BIGNUM
   Integer(const unsigned char* val_ptr, size_t size) : num_{BN_bin2bn(val_ptr, size, nullptr)} {
     assertResultValid(num_.get());
-    wat_ = wat();
-    std::cout << " (const unsigned char* val_ptr, size_t size) " << std::endl;
   }
-  ~Integer() { std::cout << "EFRAT DEallocated id " << wat_ << std::endl; }
-  Integer(const Integer& i) : num_{BN_dup(i.num_.get())} {
-    wat_ = wat();
-    std::cout << " (const Integer& i) " << std::endl;
-    assertResultValid(num_.get());
-  }
-
- private:
+  ~Integer() {}
+  Integer(const Integer& i) : num_{BN_dup(i.num_.get())} { assertResultValid(num_.get()); }
   Integer(Integer&& other) { num_ = std::move(other.num_); }
 
   template <typename T>
@@ -83,7 +58,6 @@ class Integer {
 
  public:
   static Integer fromHexString(const std::string& hex_str) {
-    std::cout << "Integer::fromHexString" << std::endl;
     BIGNUM* result_ptr = nullptr;
     assertResultValid(BN_hex2bn(&result_ptr, hex_str.c_str()));
     Integer result;
@@ -91,7 +65,6 @@ class Integer {
     return result;
   }
   static Integer fromDecString(const std::string& dec_str) {
-    std::cout << "Integer::fromDecString" << std::endl;
     BIGNUM* result_ptr = nullptr;
     assertResultValid(BN_dec2bn(&result_ptr, dec_str.c_str()));
     Integer result;
@@ -102,14 +75,12 @@ class Integer {
   bool isNegative() { return BN_is_negative(num_.get()); }
 
   Integer operator+(const Integer& i) {
-    std::cout << "Integer::operator+" << std::endl;
     Integer result;
     assertResultValid(BN_add(result.num_.get(), num_.get(), i.num_.get()));
     return result;
   }
 
   Integer& operator+=(const Integer& i) {
-    std::cout << "Integer::operator+=" << std::endl;
     *this = (*this + i);
     return *this;
   }
@@ -175,4 +146,5 @@ inline std::ostream& operator<<(std::ostream& os, const Integer& i) {
   os << i.toHexString();
   return os;
 }
+
 }  // namespace concord::crypto::openssl
